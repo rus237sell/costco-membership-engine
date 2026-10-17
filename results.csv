@@ -1,0 +1,11 @@
+fiscal_year,year_end,net_sales_$M,membership_fees_$M,total_revenue_$M,operating_income_$M,net_income_$M,fees_share_of_revenue_%,fees_share_of_op_income_%,op_income_ex_fees_$M,op_margin_%,op_margin_ex_fees_%,note
+2017,2017-09-03,126172,2853,129025,4111,2679,2.21,69.4,1258,3.19,0.98,counterfactual holds expenses flat: approximate upper bound on fee contribution
+2018,2018-09-02,138434,3142,141576,4480,3134,2.22,70.1,1338,3.16,0.95,counterfactual holds expenses flat: approximate upper bound on fee contribution
+2019,2019-09-01,149351,3352,152703,4737,3659,2.2,70.8,1385,3.1,0.91,counterfactual holds expenses flat: approximate upper bound on fee contribution
+2020,2020-08-30,163220,3541,166761,5435,4002,2.12,65.2,1894,3.26,1.14,counterfactual holds expenses flat: approximate upper bound on fee contribution
+2021,2021-08-29,192052,3877,195929,6708,5007,1.98,57.8,2831,3.42,1.44,counterfactual holds expenses flat: approximate upper bound on fee contribution
+2022,2022-08-28,222730,4224,226954,7793,5844,1.86,54.2,3569,3.43,1.57,counterfactual holds expenses flat: approximate upper bound on fee contribution
+2023,2023-09-03,237710,4580,242290,8114,6292,1.89,56.4,3534,3.35,1.46,counterfactual holds expenses flat: approximate upper bound on fee contribution
+2024,2024-09-01,249625,4828,254453,9285,7367,1.9,52.0,4457,3.65,1.75,counterfactual holds expenses flat: approximate upper bound on fee contribution
+2025,2025-08-31,269912,5323,275235,10383,8099,1.93,51.3,5060,3.77,1.84,counterfactual holds expenses flat: approximate upper bound on fee contribution
+2026,2026-08-30,297247,5907,303154,11685,9226,1.95,50.6,5778,3.85,1.91,counterfactual holds expenses flat: approximate upper bound on fee contribution
