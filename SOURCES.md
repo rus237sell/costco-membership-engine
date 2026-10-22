@@ -40,3 +40,12 @@ revenue.
   RevenueFromEnrollmentAndRegistrationFeesExcludingHospitalityEnterprises
   ends at FY2017, where it confirms the table: $2,853M), which is why
   the split itself is transcribed from the 10-K statements above.
+
+## v2 derived cuts (no new external data)
+
+- Replacement sales and fee sensitivity are computed only from the
+  10-K table above: replacement sales = membership fees divided by
+  that year's ex-fee merchandise margin (ex-fee operating income /
+  net sales); sensitivity recognizes 100/75/50/25/0% of the fee line
+  with expenses held flat and margin on reported total revenue, so
+  the 100% row equals reported and the 0% row equals the ex-fee row.

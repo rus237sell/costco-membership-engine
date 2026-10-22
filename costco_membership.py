@@ -14,6 +14,12 @@ so read the ex-fee profit as "profit if the fee revenue vanished and
 nothing else changed," an approximate upper bound on the fees'
 contribution, not a segment P&L.
 
+v2 adds two cuts on the same verified table, no new external data:
+(1) Replacement sales -- how much extra net sales, earned at that year's
+ex-fee merchandise margin (ex-fee operating income / net sales), it
+would take to replace the full fee line. (2) Fee sensitivity -- operating
+income and margin at 100/75/50/25/0% fee realization for every year.
+
 Coverage: fiscal 2017 through fiscal 2026 (fiscal years end in late
 August / early September; FY2023 was a 53-week year). Figures are
 transcribed from the 10-K income statements in SOURCES.md and
@@ -33,6 +39,7 @@ import matplotlib.pyplot as plt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CIK = 909832  # Costco Wholesale Corp
+FEE_REALIZATIONS = (100, 75, 50, 25, 0)
 
 # ---------------------------------------------------------------------------
 # Costco 10-K consolidated statements of income ($M).
@@ -52,6 +59,71 @@ COSTCO = [
     (2025, "2025-08-31", 269912, 5323, 275235, 10383, 8099),
     (2026, "2026-08-30", 297247, 5907, 303154, 11685, 9226),
 ]
+
+
+def build_rows(data=COSTCO):
+    """One results row per fiscal year, including the v2 replacement cut.
+
+    Replacement sales = fees / ex-fee merchandise margin, where the
+    merchandise margin is ex-fee operating income divided by net sales.
+    It answers: at the margin the merchandise business actually earns
+    without fees, how much more merchandise would Costco have to sell
+    to make up the entire fee line?
+    """
+    rows = []
+    for fy, end, sales, fees, total, op, net in data:
+        assert sales + fees == total, f"FY{fy}: revenue lines do not add up"
+        ex = op - fees
+        merch_margin = ex / sales if sales and ex > 0 else None
+        replacement = round(fees / merch_margin) if merch_margin else None
+        rows.append({
+            "fiscal_year": fy,
+            "year_end": end,
+            "net_sales_$M": sales,
+            "membership_fees_$M": fees,
+            "total_revenue_$M": total,
+            "operating_income_$M": op,
+            "net_income_$M": net,
+            "fees_share_of_revenue_%": round(fees / total * 100, 2),
+            "fees_share_of_op_income_%": round(fees / op * 100, 1),
+            "op_income_ex_fees_$M": ex,
+            "op_margin_%": round(op / total * 100, 2),
+            "op_margin_ex_fees_%": round(ex / total * 100, 2),
+            "ex_fee_margin_on_net_sales_%": (
+                round(merch_margin * 100, 2) if merch_margin else None),
+            "replacement_net_sales_$M": replacement,
+            "replacement_sales_%_of_net_sales": (
+                round(replacement / sales * 100, 1) if replacement else None),
+            "note": ("counterfactual holds expenses flat: approximate upper "
+                     "bound on fee contribution"),
+        })
+    return rows
+
+
+def sensitivity_rows(rows):
+    """Operating income/margin if only part of the fee line is realized.
+
+    Margin uses reported total revenue as the denominator, matching
+    results.csv, so the 100% row equals reported and the 0% row equals
+    the ex-fee row exactly.
+    """
+    out = []
+    for r in rows:
+        ex = r["op_income_ex_fees_$M"]
+        fees = r["membership_fees_$M"]
+        total = r["total_revenue_$M"]
+        for pct in FEE_REALIZATIONS:
+            recognized = round(fees * pct / 100)
+            op_scenario = ex + recognized
+            out.append({
+                "fiscal_year": r["fiscal_year"],
+                "fee_realization_%": pct,
+                "fees_recognized_$M": recognized,
+                "operating_income_$M": op_scenario,
+                "op_margin_on_reported_revenue_%": round(
+                    op_scenario / total * 100, 2),
+            })
+    return out
 
 
 def edgar_crosscheck():
@@ -93,32 +165,18 @@ def edgar_crosscheck():
     return {end: (rev[end], op[end], net[end]) for end in ends}
 
 
-def main():
-    rows = []
-    for fy, end, sales, fees, total, op, net in COSTCO:
-        assert sales + fees == total, f"FY{fy}: revenue lines do not add up"
-        ex = op - fees
-        rows.append({
-            "fiscal_year": fy,
-            "year_end": end,
-            "net_sales_$M": sales,
-            "membership_fees_$M": fees,
-            "total_revenue_$M": total,
-            "operating_income_$M": op,
-            "net_income_$M": net,
-            "fees_share_of_revenue_%": round(fees / total * 100, 2),
-            "fees_share_of_op_income_%": round(fees / op * 100, 1),
-            "op_income_ex_fees_$M": ex,
-            "op_margin_%": round(op / total * 100, 2),
-            "op_margin_ex_fees_%": round(ex / total * 100, 2),
-            "note": ("counterfactual holds expenses flat: approximate upper "
-                     "bound on fee contribution"),
-        })
-
-    with open(os.path.join(HERE, "results.csv"), "w", newline="") as f:
+def write_csv(path, rows):
+    with open(path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader()
         w.writerows(rows)
+
+
+def main():
+    rows = build_rows()
+    write_csv(os.path.join(HERE, "results.csv"), rows)
+    sens = sensitivity_rows(rows)
+    write_csv(os.path.join(HERE, "sensitivity.csv"), sens)
 
     # ---- chart: operating income vs ex-membership operating income --------
     yrs = [str(r["fiscal_year"]) for r in rows]
@@ -143,6 +201,21 @@ def main():
     ax.legend(fontsize=9)
     fig.tight_layout()
     fig.savefig(os.path.join(HERE, "results.png"), dpi=120)
+    plt.close(fig)
+
+    # ---- chart: replacement sales burden ----------------------------------
+    fig, ax = plt.subplots(figsize=(9, 4.2))
+    vals = [r["replacement_sales_%_of_net_sales"] for r in rows]
+    ax.bar(list(x), vals, width=0.6, color="#1f4e79")
+    for i, v in enumerate(vals):
+        ax.text(i, v + 5, f"{v:.0f}%", ha="center", fontsize=8)
+    ax.set_xticks(list(x))
+    ax.set_xticklabels([f"FY{y}" for y in yrs])
+    ax.set_ylabel("% of that year's net sales")
+    ax.set_title("Extra net sales needed to replace all membership fees\n"
+                 "(at that year's ex-fee merchandise margin)")
+    fig.tight_layout()
+    fig.savefig(os.path.join(HERE, "replacement.png"), dpi=120)
     plt.close(fig)
 
     # ---- printed findings --------------------------------------------------
@@ -188,10 +261,32 @@ def main():
           f"{len(rows)} years shown (thinnest: FY2017, "
           f"${rows[0]['op_income_ex_fees_$M']:,}M).")
     print()
+    peak = max(rows, key=lambda r: r["replacement_sales_%_of_net_sales"])
+    print(f"Replacement sales: at the ex-fee merchandise margin "
+          f"({first['ex_fee_margin_on_net_sales_%']:.2f}% of net sales in "
+          f"FY2017, {last['ex_fee_margin_on_net_sales_%']:.2f}% in FY2026), "
+          f"replacing all fees would have taken an extra "
+          f"${first['replacement_net_sales_$M']/1000:.0f}B of net sales in "
+          f"FY2017 ({first['replacement_sales_%_of_net_sales']:.1f}% of that "
+          f"year's net sales; peak {peak['replacement_sales_%_of_net_sales']:.1f}% "
+          f"in FY{peak['fiscal_year']}) and an extra "
+          f"${last['replacement_net_sales_$M']/1000:.0f}B in FY2026 "
+          f"({last['replacement_sales_%_of_net_sales']:.1f}%). The dollar "
+          f"amount barely moved; the burden halved because the merchandise "
+          f"margin roughly doubled and sales more than doubled.")
+    fy26_sens = [s for s in sens if s["fiscal_year"] == 2026]
+    half = next(s for s in fy26_sens if s["fee_realization_%"] == 50)
+    print(f"Fee sensitivity (FY2026): at 50% fee realization operating "
+          f"income is ${half['operating_income_$M']/1000:.2f}B "
+          f"({half['op_margin_on_reported_revenue_%']:.2f}% margin on "
+          f"reported revenue); even at 0% it stays positive at "
+          f"${last['op_income_ex_fees_$M']/1000:.2f}B in every year tested.")
+    print()
     print("Caveats: fee counterfactual holds expenses flat (approximate "
           "upper bound); in reality losing the fee would also lose the "
           "members and their merchandise spending, which this does not "
-          "model.")
+          "model. Replacement sales assumes new sales earn the same "
+          "ex-fee margin as existing sales, with no added fixed cost.")
 
     # ---- live EDGAR cross-check -------------------------------------------
     check = edgar_crosscheck()
@@ -216,7 +311,8 @@ def main():
         print("EDGAR cross-check unavailable this run; 10-K table stands "
               "alone (see SOURCES.md).")
     print()
-    print("Sources: SOURCES.md (results.csv, results.png written).")
+    print("Sources: SOURCES.md (results.csv, sensitivity.csv, results.png, "
+          "replacement.png written).")
 
 
 if __name__ == "__main__":
