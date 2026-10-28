@@ -20,6 +20,13 @@ ex-fee merchandise margin (ex-fee operating income / net sales), it
 would take to replace the full fee line. (2) Fee sensitivity -- operating
 income and margin at 100/75/50/25/0% fee realization for every year.
 
+v3 adds growth attribution, also on the same table: every year-over-year
+change in operating income splits exactly into the change in membership
+fees plus the change in ex-fee (merchandise) operating income, because
+operating income is fees plus ex-fee operating income by construction.
+That split shows who carried profit growth each year, and cumulatively
+over the decade -- a different question from the level shares in v1.
+
 Coverage: fiscal 2017 through fiscal 2026 (fiscal years end in late
 August / early September; FY2023 was a 53-week year). Figures are
 transcribed from the 10-K income statements in SOURCES.md and
@@ -126,6 +133,44 @@ def sensitivity_rows(rows):
     return out
 
 
+def build_growth(rows):
+    """Year-over-year growth attribution for operating income.
+
+    Operating income = membership fees + ex-fee operating income, so each
+    year's change splits exactly: delta_op = delta_fees + delta_ex_fee.
+    The fee share of a year's growth can exceed 100% (or be negative)
+    when the other component moves the opposite way -- FY2023 is the
+    case here: ex-fee income fell $35M while fees rose $356M. Cumulative
+    columns run from the first year in the table.
+    """
+    out = []
+    cum_fees = cum_ex = cum_op = 0
+    for prev, cur in zip(rows, rows[1:]):
+        d_op = cur["operating_income_$M"] - prev["operating_income_$M"]
+        d_fees = (cur["membership_fees_$M"]
+                  - prev["membership_fees_$M"])
+        d_ex = (cur["op_income_ex_fees_$M"]
+                - prev["op_income_ex_fees_$M"])
+        assert d_fees + d_ex == d_op
+        cum_fees += d_fees
+        cum_ex += d_ex
+        cum_op += d_op
+        out.append({
+            "fiscal_year": cur["fiscal_year"],
+            "op_income_growth_$M": d_op,
+            "fee_growth_$M": d_fees,
+            "ex_fee_op_growth_$M": d_ex,
+            "fee_share_of_op_growth_%": (
+                round(d_fees / d_op * 100, 1) if d_op else None),
+            "cum_op_growth_since_FY2017_$M": cum_op,
+            "cum_fee_growth_since_FY2017_$M": cum_fees,
+            "cum_ex_fee_growth_since_FY2017_$M": cum_ex,
+            "cum_fee_share_of_op_growth_%": (
+                round(cum_fees / cum_op * 100, 1) if cum_op else None),
+        })
+    return out
+
+
 def edgar_crosscheck():
     """Live SEC EDGAR company facts: total revenue, operating income and
     net income by fiscal year-end, to cross-check the transcribed table.
@@ -177,6 +222,8 @@ def main():
     write_csv(os.path.join(HERE, "results.csv"), rows)
     sens = sensitivity_rows(rows)
     write_csv(os.path.join(HERE, "sensitivity.csv"), sens)
+    growth = build_growth(rows)
+    write_csv(os.path.join(HERE, "growth.csv"), growth)
 
     # ---- chart: operating income vs ex-membership operating income --------
     yrs = [str(r["fiscal_year"]) for r in rows]
@@ -216,6 +263,31 @@ def main():
                  "(at that year's ex-fee merchandise margin)")
     fig.tight_layout()
     fig.savefig(os.path.join(HERE, "replacement.png"), dpi=120)
+    plt.close(fig)
+
+    # ---- chart: growth attribution ----------------------------------------
+    fig, ax = plt.subplots(figsize=(9, 4.2))
+    gx = range(len(growth))
+    ax.bar(gx, [g["fee_growth_$M"] / 1000 for g in growth],
+           width=0.6, color="#1f4e79", label="Membership fee growth")
+    ax.bar(gx, [g["ex_fee_op_growth_$M"] / 1000 for g in growth],
+           width=0.6,
+           bottom=[g["fee_growth_$M"] / 1000 for g in growth],
+           color="#b00020",
+           label="Ex-fee (merchandise) operating income growth")
+    ax.axhline(0, color="black", linewidth=0.8)
+    for i, g in enumerate(growth):
+        ax.text(i, g["op_income_growth_$M"] / 1000 + 0.06,
+                f"{g['fee_share_of_op_growth_%']:.0f}%",
+                ha="center", fontsize=8)
+    ax.set_xticks(list(gx))
+    ax.set_xticklabels([f"FY{g['fiscal_year']}" for g in growth])
+    ax.set_ylabel("$B change vs prior year")
+    ax.set_title("Costco operating income growth, split by source\n"
+                 "(label = fees as % of that year's growth)")
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    fig.savefig(os.path.join(HERE, "growth.png"), dpi=120)
     plt.close(fig)
 
     # ---- printed findings --------------------------------------------------
@@ -282,6 +354,25 @@ def main():
           f"reported revenue); even at 0% it stays positive at "
           f"${last['op_income_ex_fees_$M']/1000:.2f}B in every year tested.")
     print()
+    decade = growth[-1]
+    early = growth[:2]
+    fy23 = next(g for g in growth if g["fiscal_year"] == 2023)
+    print(f"Growth attribution: of the "
+          f"${decade['cum_op_growth_since_FY2017_$M']/1000:.2f}B operating "
+          f"income growth from FY2017 to FY2026, fee growth supplied "
+          f"${decade['cum_fee_growth_since_FY2017_$M']/1000:.2f}B "
+          f"({decade['cum_fee_share_of_op_growth_%']:.1f}%) and ex-fee "
+          f"merchandise growth supplied "
+          f"${decade['cum_ex_fee_growth_since_FY2017_$M']/1000:.2f}B -- "
+          f"fees are about half the level of profit but only about two "
+          f"fifths of its growth. Early on fees carried growth "
+          f"({early[0]['fee_share_of_op_growth_%']:.1f}% in FY2018 and "
+          f"{early[1]['fee_share_of_op_growth_%']:.1f}% in FY2019); in "
+          f"FY2023 fees supplied "
+          f"{fy23['fee_share_of_op_growth_%']:.1f}% of growth because "
+          f"ex-fee income fell ${-fy23['ex_fee_op_growth_$M']}M while "
+          f"fees rose ${fy23['fee_growth_$M']}M.")
+    print()
     print("Caveats: fee counterfactual holds expenses flat (approximate "
           "upper bound); in reality losing the fee would also lose the "
           "members and their merchandise spending, which this does not "
@@ -311,8 +402,8 @@ def main():
         print("EDGAR cross-check unavailable this run; 10-K table stands "
               "alone (see SOURCES.md).")
     print()
-    print("Sources: SOURCES.md (results.csv, sensitivity.csv, results.png, "
-          "replacement.png written).")
+    print("Sources: SOURCES.md (results.csv, sensitivity.csv, growth.csv, "
+          "results.png, replacement.png, growth.png written).")
 
 
 if __name__ == "__main__":

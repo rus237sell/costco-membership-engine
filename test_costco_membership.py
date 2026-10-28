@@ -5,7 +5,8 @@ No network: these test build_rows / sensitivity_rows only, not EDGAR.
 """
 import unittest
 
-from costco_membership import COSTCO, FEE_REALIZATIONS, build_rows, sensitivity_rows
+from costco_membership import (
+    COSTCO, FEE_REALIZATIONS, build_growth, build_rows, sensitivity_rows)
 
 
 class TestBuildRows(unittest.TestCase):
@@ -70,6 +71,56 @@ class TestSensitivity(unittest.TestCase):
         for year_rows in by_year.values():
             ops = [s["operating_income_$M"] for s in year_rows]
             self.assertEqual(ops, sorted(ops, reverse=True))
+
+
+class TestGrowth(unittest.TestCase):
+    def setUp(self):
+        self.rows = build_rows()
+        self.growth = build_growth(self.rows)
+
+    def test_shape_starts_fy2018(self):
+        self.assertEqual(len(self.growth), len(self.rows) - 1)
+        self.assertEqual(self.growth[0]["fiscal_year"], 2018)
+        self.assertEqual(self.growth[-1]["fiscal_year"], 2026)
+
+    def test_split_is_exact_every_year(self):
+        for g in self.growth:
+            self.assertEqual(
+                g["fee_growth_$M"] + g["ex_fee_op_growth_$M"],
+                g["op_income_growth_$M"])
+
+    def test_deltas_match_level_rows(self):
+        for prev, cur, g in zip(self.rows, self.rows[1:], self.growth):
+            self.assertEqual(g["op_income_growth_$M"],
+                             cur["operating_income_$M"]
+                             - prev["operating_income_$M"])
+            self.assertEqual(g["fee_growth_$M"],
+                             cur["membership_fees_$M"]
+                             - prev["membership_fees_$M"])
+
+    def test_decade_totals(self):
+        last = self.growth[-1]
+        self.assertEqual(last["cum_op_growth_since_FY2017_$M"], 7574)
+        self.assertEqual(last["cum_fee_growth_since_FY2017_$M"], 3054)
+        self.assertEqual(last["cum_ex_fee_growth_since_FY2017_$M"], 4520)
+        self.assertEqual(last["cum_fee_share_of_op_growth_%"], 40.3)
+        # cumulative columns equal first-to-last level differences
+        self.assertEqual(
+            last["cum_op_growth_since_FY2017_$M"],
+            self.rows[-1]["operating_income_$M"]
+            - self.rows[0]["operating_income_$M"])
+
+    def test_fy2023_fees_carried_all_growth(self):
+        fy23 = next(g for g in self.growth if g["fiscal_year"] == 2023)
+        self.assertEqual(fy23["ex_fee_op_growth_$M"], -35)
+        self.assertEqual(fy23["fee_growth_$M"], 356)
+        self.assertGreater(fy23["fee_share_of_op_growth_%"], 100)
+
+    def test_early_years_fee_led(self):
+        shares = {g["fiscal_year"]: g["fee_share_of_op_growth_%"]
+                  for g in self.growth}
+        self.assertEqual(shares[2018], 78.3)
+        self.assertEqual(shares[2019], 81.7)
 
 
 if __name__ == "__main__":

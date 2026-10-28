@@ -49,3 +49,11 @@ revenue.
   net sales); sensitivity recognizes 100/75/50/25/0% of the fee line
   with expenses held flat and margin on reported total revenue, so
   the 100% row equals reported and the 0% row equals the ex-fee row.
+
+## v3 derived cut (no new external data)
+
+- Growth attribution is computed only from the same table: since
+  operating income = membership fees + ex-fee operating income, each
+  year-over-year change in operating income splits exactly into the
+  change in fees plus the change in ex-fee operating income. Shares
+  can exceed 100% when the other component falls (FY2023).
