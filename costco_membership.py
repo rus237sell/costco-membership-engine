@@ -27,6 +27,14 @@ operating income is fees plus ex-fee operating income by construction.
 That split shows who carried profit growth each year, and cumulatively
 over the decade -- a different question from the level shares in v1.
 
+v4 adds a stability cut, also on the same table: the year-over-year
+growth rates of fees, ex-fee operating income, and reported operating
+income, summarized by mean, population standard deviation, range, and
+down years over the nine growth years FY2018-FY2026. The level and
+growth cuts say fees are large and carried early growth; this cut asks
+how steady each line is -- whether the fee line behaves like a stable
+annuity next to a volatile merchandise business.
+
 Coverage: fiscal 2017 through fiscal 2026 (fiscal years end in late
 August / early September; FY2023 was a 53-week year). Figures are
 transcribed from the 10-K income statements in SOURCES.md and
@@ -37,6 +45,7 @@ operating income, and net income at run time.
 import csv
 import json
 import os
+import statistics
 import urllib.request
 from datetime import date
 
@@ -171,6 +180,63 @@ def build_growth(rows):
     return out
 
 
+def build_growth_rates(rows):
+    """Year-over-year growth rates (%) for fees, ex-fee and reported
+    operating income, FY2018 onward."""
+    out = []
+    for prev, cur in zip(rows, rows[1:]):
+        out.append({
+            "fiscal_year": cur["fiscal_year"],
+            "fee_growth_%": round(
+                (cur["membership_fees_$M"] / prev["membership_fees_$M"]
+                 - 1) * 100, 2),
+            "ex_fee_op_growth_%": round(
+                (cur["op_income_ex_fees_$M"] / prev["op_income_ex_fees_$M"]
+                 - 1) * 100, 2),
+            "op_income_growth_%": round(
+                (cur["operating_income_$M"] / prev["operating_income_$M"]
+                 - 1) * 100, 2),
+        })
+    return out
+
+
+def build_stability(rows):
+    """Stability summary per series over the nine growth years.
+
+    Standard deviation is the population stdev of the nine observed
+    growth years (the full period studied, not a sample from it).
+    A series can average faster growth and still be the riskier line:
+    what matters here is the spread around that average and whether
+    the line ever shrinks.
+    """
+    series = [
+        ("membership_fees", "fee_growth_%"),
+        ("ex_fee_operating_income", "ex_fee_op_growth_%"),
+        ("operating_income", "op_income_growth_%"),
+    ]
+    out = []
+    for name, key in series:
+        raw = []
+        col = {
+            "fee_growth_%": "membership_fees_$M",
+            "ex_fee_op_growth_%": "op_income_ex_fees_$M",
+            "op_income_growth_%": "operating_income_$M",
+        }[key]
+        for prev, cur in zip(rows, rows[1:]):
+            raw.append((cur[col] / prev[col] - 1) * 100)
+        out.append({
+            "series": name,
+            "growth_years": len(raw),
+            "mean_yoy_growth_%": round(statistics.mean(raw), 2),
+            "growth_stdev_pts": round(statistics.pstdev(raw), 2),
+            "min_yoy_growth_%": round(min(raw), 2),
+            "max_yoy_growth_%": round(max(raw), 2),
+            "range_pts": round(max(raw) - min(raw), 2),
+            "negative_growth_years": sum(1 for v in raw if v < 0),
+        })
+    return out
+
+
 def edgar_crosscheck():
     """Live SEC EDGAR company facts: total revenue, operating income and
     net income by fiscal year-end, to cross-check the transcribed table.
@@ -224,6 +290,10 @@ def main():
     write_csv(os.path.join(HERE, "sensitivity.csv"), sens)
     growth = build_growth(rows)
     write_csv(os.path.join(HERE, "growth.csv"), growth)
+    rates = build_growth_rates(rows)
+    write_csv(os.path.join(HERE, "growth_rates.csv"), rates)
+    stability = build_stability(rows)
+    write_csv(os.path.join(HERE, "stability.csv"), stability)
 
     # ---- chart: operating income vs ex-membership operating income --------
     yrs = [str(r["fiscal_year"]) for r in rows]
@@ -288,6 +358,25 @@ def main():
     ax.legend(fontsize=9)
     fig.tight_layout()
     fig.savefig(os.path.join(HERE, "growth.png"), dpi=120)
+    plt.close(fig)
+
+    # ---- chart: growth-rate stability --------------------------------------
+    fig, ax = plt.subplots(figsize=(9, 4.2))
+    rx = range(len(rates))
+    ax.plot(rx, [r["fee_growth_%"] for r in rates], marker="o",
+            color="#1f4e79", label="Membership fee growth")
+    ax.plot(rx, [r["ex_fee_op_growth_%"] for r in rates], marker="o",
+            color="#b00020", label="Ex-fee operating income growth")
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_xticks(list(rx))
+    ax.set_xticklabels([f"FY{r['fiscal_year']}" for r in rates])
+    ax.set_ylabel("YoY growth %")
+    ax.set_title("Costco growth stability: fees vs ex-fee operating income\n"
+                 "(fee growth stayed in a 5.4% to 11.0% band; ex-fee swung "
+                 "-1.0% to +49.5%)")
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    fig.savefig(os.path.join(HERE, "stability.png"), dpi=120)
     plt.close(fig)
 
     # ---- printed findings --------------------------------------------------
@@ -373,6 +462,24 @@ def main():
           f"ex-fee income fell ${-fy23['ex_fee_op_growth_$M']}M while "
           f"fees rose ${fy23['fee_growth_$M']}M.")
     print()
+    stab = {s["series"]: s for s in stability}
+    fees_s = stab["membership_fees"]
+    ex_s = stab["ex_fee_operating_income"]
+    ratio = ex_s["growth_stdev_pts"] / fees_s["growth_stdev_pts"]
+    print(f"Stability: over FY2018-FY2026 fee growth averaged "
+          f"{fees_s['mean_yoy_growth_%']:.2f}%/yr with a "
+          f"{fees_s['growth_stdev_pts']:.2f}-pt standard deviation and "
+          f"never fell (range {fees_s['min_yoy_growth_%']:.2f}% to "
+          f"{fees_s['max_yoy_growth_%']:.2f}%). Ex-fee operating income "
+          f"grew faster on average ({ex_s['mean_yoy_growth_%']:.2f}%/yr) "
+          f"but with a {ex_s['growth_stdev_pts']:.2f}-pt standard "
+          f"deviation -- about {ratio:.0f}x the fee line's -- ranging "
+          f"{ex_s['min_yoy_growth_%']:.2f}% to "
+          f"{ex_s['max_yoy_growth_%']:.2f}% with "
+          f"{ex_s['negative_growth_years']} down year. The fee line is "
+          f"the slow, steady half of operating profit; the merchandise "
+          f"line supplies most of the growth and nearly all of the swing.")
+    print()
     print("Caveats: fee counterfactual holds expenses flat (approximate "
           "upper bound); in reality losing the fee would also lose the "
           "members and their merchandise spending, which this does not "
@@ -403,7 +510,8 @@ def main():
               "alone (see SOURCES.md).")
     print()
     print("Sources: SOURCES.md (results.csv, sensitivity.csv, growth.csv, "
-          "results.png, replacement.png, growth.png written).")
+          "growth_rates.csv, stability.csv, results.png, replacement.png, "
+          "growth.png, stability.png written).")
 
 
 if __name__ == "__main__":

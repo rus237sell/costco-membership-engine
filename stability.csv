@@ -1,0 +1,4 @@
+series,growth_years,mean_yoy_growth_%,growth_stdev_pts,min_yoy_growth_%,max_yoy_growth_%,range_pts,negative_growth_years
+membership_fees,9,8.44,1.94,5.41,10.97,5.56,0
+ex_fee_operating_income,9,19.45,15.61,-0.98,49.47,50.45,1
+operating_income,9,12.44,5.48,4.12,23.42,19.3,0

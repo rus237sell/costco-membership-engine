@@ -1,12 +1,13 @@
 """Unit checks for the Costco membership engine calculations.
 
 Run: python3 -m unittest test_costco_membership -v
-No network: these test build_rows / sensitivity_rows only, not EDGAR.
+No network: these test the calculation builders only, not EDGAR.
 """
 import unittest
 
 from costco_membership import (
-    COSTCO, FEE_REALIZATIONS, build_growth, build_rows, sensitivity_rows)
+    COSTCO, FEE_REALIZATIONS, build_growth, build_growth_rates, build_rows,
+    build_stability, sensitivity_rows)
 
 
 class TestBuildRows(unittest.TestCase):
@@ -121,6 +122,68 @@ class TestGrowth(unittest.TestCase):
                   for g in self.growth}
         self.assertEqual(shares[2018], 78.3)
         self.assertEqual(shares[2019], 81.7)
+
+
+class TestStability(unittest.TestCase):
+    def setUp(self):
+        self.rows = build_rows()
+        self.rates = build_growth_rates(self.rows)
+        self.stab = {s["series"]: s for s in build_stability(self.rows)}
+
+    def test_shape(self):
+        self.assertEqual(len(self.rates), len(self.rows) - 1)
+        self.assertEqual(self.rates[0]["fiscal_year"], 2018)
+        self.assertEqual(self.rates[-1]["fiscal_year"], 2026)
+        self.assertEqual(set(self.stab), {
+            "membership_fees", "ex_fee_operating_income",
+            "operating_income"})
+        for s in self.stab.values():
+            self.assertEqual(s["growth_years"], 9)
+
+    def test_rates_match_levels(self):
+        for prev, cur, r in zip(self.rows, self.rows[1:], self.rates):
+            self.assertAlmostEqual(
+                r["fee_growth_%"],
+                (cur["membership_fees_$M"] / prev["membership_fees_$M"]
+                 - 1) * 100, places=2)
+            self.assertAlmostEqual(
+                r["ex_fee_op_growth_%"],
+                (cur["op_income_ex_fees_$M"]
+                 / prev["op_income_ex_fees_$M"] - 1) * 100, places=2)
+
+    def test_fee_growth_never_negative_and_in_band(self):
+        fees = self.stab["membership_fees"]
+        self.assertEqual(fees["negative_growth_years"], 0)
+        self.assertEqual(fees["min_yoy_growth_%"], 5.41)
+        self.assertEqual(fees["max_yoy_growth_%"], 10.97)
+        for r in self.rates:
+            self.assertGreater(r["fee_growth_%"], 0)
+
+    def test_ex_fee_swing_hand_values(self):
+        ex = self.stab["ex_fee_operating_income"]
+        self.assertEqual(ex["negative_growth_years"], 1)
+        self.assertEqual(ex["min_yoy_growth_%"], -0.98)
+        self.assertEqual(ex["max_yoy_growth_%"], 49.47)
+        self.assertEqual(ex["range_pts"], 50.45)
+
+    def test_summary_stats_hand_values(self):
+        fees = self.stab["membership_fees"]
+        ex = self.stab["ex_fee_operating_income"]
+        self.assertEqual(fees["mean_yoy_growth_%"], 8.44)
+        self.assertEqual(fees["growth_stdev_pts"], 1.94)
+        self.assertEqual(ex["mean_yoy_growth_%"], 19.45)
+        self.assertEqual(ex["growth_stdev_pts"], 15.61)
+
+    def test_ex_fee_far_more_volatile_than_fees(self):
+        ratio = (self.stab["ex_fee_operating_income"]["growth_stdev_pts"]
+                 / self.stab["membership_fees"]["growth_stdev_pts"])
+        self.assertGreater(ratio, 7)
+
+    def test_range_is_max_minus_min(self):
+        for s in self.stab.values():
+            self.assertAlmostEqual(
+                s["range_pts"],
+                s["max_yoy_growth_%"] - s["min_yoy_growth_%"], places=2)
 
 
 if __name__ == "__main__":

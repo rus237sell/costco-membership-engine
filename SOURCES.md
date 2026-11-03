@@ -57,3 +57,12 @@ revenue.
   year-over-year change in operating income splits exactly into the
   change in fees plus the change in ex-fee operating income. Shares
   can exceed 100% when the other component falls (FY2023).
+
+## v4 derived cut (no new external data)
+
+- Stability is computed only from the same table: year-over-year
+  growth rates for membership fees, ex-fee operating income, and
+  reported operating income over the nine growth years FY2018-FY2026,
+  summarized with mean, population standard deviation (the nine years
+  are the full period studied, not a sample), range, and count of
+  negative-growth years.
