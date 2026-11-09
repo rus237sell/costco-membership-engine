@@ -6,8 +6,9 @@ No network: these test the calculation builders only, not EDGAR.
 import unittest
 
 from costco_membership import (
-    COSTCO, FEE_REALIZATIONS, build_growth, build_growth_rates, build_rows,
-    build_stability, sensitivity_rows)
+    COSTCO, ERAS, FEE_REALIZATIONS, build_cumulative, build_eras,
+    build_growth, build_growth_rates, build_rows, build_stability,
+    sensitivity_rows)
 
 
 class TestBuildRows(unittest.TestCase):
@@ -185,6 +186,69 @@ class TestStability(unittest.TestCase):
                 s["range_pts"],
                 s["max_yoy_growth_%"] - s["min_yoy_growth_%"], places=2)
 
+class TestCumulativeEras(unittest.TestCase):
+    def setUp(self):
+        self.rows = build_rows()
+        self.cum = build_cumulative(self.rows)
+        self.eras = build_eras(self.rows)
+
+    def test_cumulative_shape_and_first_year(self):
+        self.assertEqual(len(self.cum), len(self.rows))
+        self.assertEqual(self.cum[0]["cum_membership_fees_$M"], 2853)
+        self.assertEqual(self.cum[0]["cum_fees_share_of_op_income_%"], 69.4)
+
+    def test_cumulative_last_equals_decade_totals(self):
+        last = self.cum[-1]
+        self.assertEqual(last["cum_membership_fees_$M"], 41627)
+        self.assertEqual(last["cum_operating_income_$M"], 72731)
+        self.assertEqual(last["cum_op_income_ex_fees_$M"], 31104)
+        self.assertEqual(last["cum_total_revenue_$M"], 2088080)
+        self.assertEqual(last["cum_fees_share_of_op_income_%"], 57.2)
+        # totals equal sums of the level rows
+        self.assertEqual(last["cum_membership_fees_$M"],
+                         sum(r["membership_fees_$M"] for r in self.rows))
+        self.assertEqual(last["cum_operating_income_$M"],
+                         sum(r["operating_income_$M"] for r in self.rows))
+
+    def test_cumulative_is_monotonic_and_splits(self):
+        for prev, cur in zip(self.cum, self.cum[1:]):
+            self.assertGreater(cur["cum_membership_fees_$M"],
+                               prev["cum_membership_fees_$M"])
+            self.assertGreater(cur["cum_operating_income_$M"],
+                               prev["cum_operating_income_$M"])
+        for c in self.cum:
+            self.assertEqual(
+                c["cum_membership_fees_$M"] + c["cum_op_income_ex_fees_$M"],
+                c["cum_operating_income_$M"])
+
+    def test_cumulative_share_peaks_fy2019_then_falls(self):
+        shares = [c["cum_fees_share_of_op_income_%"] for c in self.cum]
+        peak_i = shares.index(max(shares))
+        self.assertEqual(self.cum[peak_i]["fiscal_year"], 2019)
+        self.assertEqual(shares[peak_i], 70.1)
+        self.assertEqual(shares[peak_i + 1:], sorted(shares[peak_i + 1:], reverse=True))
+
+    def test_eras_shape_and_full_period_matches_cumulative(self):
+        self.assertEqual(len(self.eras), len(ERAS))
+        full = self.eras[-1]
+        self.assertEqual(full["era"], "FY2017-FY2026 full period")
+        self.assertEqual(full["membership_fees_$M"], 41627)
+        self.assertEqual(full["operating_income_$M"], 72731)
+        # first three eras partition the full period
+        parts = self.eras[:3]
+        self.assertEqual(sum(e["membership_fees_$M"] for e in parts), 41627)
+        self.assertEqual(sum(e["operating_income_$M"] for e in parts), 72731)
+        self.assertEqual(sum(e["years"] for e in parts), 10)
+
+    def test_era_fee_share_falls_monotonically(self):
+        shares = [e["fees_share_of_op_income_%"] for e in self.eras[:3]]
+        self.assertEqual(shares, [70.1, 58.4, 52.3])
+
+    def test_era_ex_fee_margin_rises_monotonically(self):
+        margins = [e["op_margin_ex_fees_%"] for e in self.eras[:3]]
+        self.assertEqual(margins, [0.94, 1.41, 1.75])
+
 
 if __name__ == "__main__":
+
     unittest.main()

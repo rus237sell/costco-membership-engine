@@ -1,0 +1,5 @@
+era,years,membership_fees_$M,operating_income_$M,op_income_ex_fees_$M,total_revenue_$M,fees_share_of_op_income_%,fees_share_of_revenue_%,op_margin_%,op_margin_ex_fees_%
+FY2017-FY2019 pre-pandemic,3,9347,13328,3981,423304,70.1,2.21,3.15,0.94
+FY2020-FY2022 pandemic surge,3,11642,19936,8294,589644,58.4,1.97,3.38,1.41
+FY2023-FY2026 post-surge,4,20638,39467,18829,1075132,52.3,1.92,3.67,1.75
+FY2017-FY2026 full period,10,41627,72731,31104,2088080,57.2,1.99,3.48,1.49

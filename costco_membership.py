@@ -35,6 +35,14 @@ growth cuts say fees are large and carried early growth; this cut asks
 how steady each line is -- whether the fee line behaves like a stable
 annuity next to a volatile merchandise business.
 
+v5 adds a cumulative / era lens, also on the same table: yearly rows
+cumulated from FY2017, and pooled into three eras (FY2017-FY2019
+pre-pandemic, FY2020-FY2022 pandemic surge, FY2023-FY2026 post-surge).
+Annual fee shares swing with each year's merchandise result; cumulating
+and pooling show whether the long-run dependence on fees is actually
+falling, and how much of the decade's profit the fee line supplied in
+total rather than in any single year.
+
 Coverage: fiscal 2017 through fiscal 2026 (fiscal years end in late
 August / early September; FY2023 was a 53-week year). Figures are
 transcribed from the 10-K income statements in SOURCES.md and
@@ -237,6 +245,71 @@ def build_stability(rows):
     return out
 
 
+
+def build_cumulative(rows):
+    """Cumulative totals from the first year in the table.
+
+    Each row cumulates fees, operating income, ex-fee operating income
+    and total revenue, so the cumulative fee share shows the long-run
+    dependence on fees without single-year merchandise noise. It peaks
+    at 70.1% through FY2019 and then falls every year to 57.2% through
+    FY2026, even though the annual share also started at 69.4%.
+    """
+    out = []
+    cum_fees = cum_op = cum_ex = cum_rev = 0
+    for r in rows:
+        cum_fees += r["membership_fees_$M"]
+        cum_op += r["operating_income_$M"]
+        cum_ex += r["op_income_ex_fees_$M"]
+        cum_rev += r["total_revenue_$M"]
+        out.append({
+            "fiscal_year": r["fiscal_year"],
+            "cum_membership_fees_$M": cum_fees,
+            "cum_operating_income_$M": cum_op,
+            "cum_op_income_ex_fees_$M": cum_ex,
+            "cum_total_revenue_$M": cum_rev,
+            "cum_fees_share_of_op_income_%": round(cum_fees / cum_op * 100, 1) if cum_op else None,
+            "cum_op_margin_%": round(cum_op / cum_rev * 100, 2) if cum_rev else None,
+            "cum_op_margin_ex_fees_%": round(cum_ex / cum_rev * 100, 2) if cum_rev else None,
+        })
+    return out
+
+
+ERAS = (
+    ("FY2017-FY2019 pre-pandemic", 2017, 2019),
+    ("FY2020-FY2022 pandemic surge", 2020, 2022),
+    ("FY2023-FY2026 post-surge", 2023, 2026),
+    ("FY2017-FY2026 full period", 2017, 2026),
+)
+
+
+def build_eras(rows):
+    """Pooled era totals: dollar-weighted, so big recent years count
+    for more than small early ones, unlike a simple average of annual
+    percentages."""
+    out = []
+    by_year = {r["fiscal_year"]: r for r in rows}
+    for name, start, end in ERAS:
+        sel = [by_year[y] for y in range(start, end + 1) if y in by_year]
+        fees = sum(r["membership_fees_$M"] for r in sel)
+        op = sum(r["operating_income_$M"] for r in sel)
+        ex = sum(r["op_income_ex_fees_$M"] for r in sel)
+        rev = sum(r["total_revenue_$M"] for r in sel)
+        out.append({
+            "era": name,
+            "years": len(sel),
+            "membership_fees_$M": fees,
+            "operating_income_$M": op,
+            "op_income_ex_fees_$M": ex,
+            "total_revenue_$M": rev,
+            "fees_share_of_op_income_%": round(fees / op * 100, 1) if op else None,
+            "fees_share_of_revenue_%": round(fees / rev * 100, 2) if rev else None,
+            "op_margin_%": round(op / rev * 100, 2) if rev else None,
+            "op_margin_ex_fees_%": round(ex / rev * 100, 2) if rev else None,
+        })
+    return out
+
+
 def edgar_crosscheck():
     """Live SEC EDGAR company facts: total revenue, operating income and
     net income by fiscal year-end, to cross-check the transcribed table.
@@ -294,6 +367,10 @@ def main():
     write_csv(os.path.join(HERE, "growth_rates.csv"), rates)
     stability = build_stability(rows)
     write_csv(os.path.join(HERE, "stability.csv"), stability)
+    cumulative = build_cumulative(rows)
+    write_csv(os.path.join(HERE, "cumulative.csv"), cumulative)
+    eras = build_eras(rows)
+    write_csv(os.path.join(HERE, "eras.csv"), eras)
 
     # ---- chart: operating income vs ex-membership operating income --------
     yrs = [str(r["fiscal_year"]) for r in rows]
@@ -377,6 +454,28 @@ def main():
     ax.legend(fontsize=9)
     fig.tight_layout()
     fig.savefig(os.path.join(HERE, "stability.png"), dpi=120)
+    plt.close(fig)
+
+    # ---- chart: cumulative lens -------------------------------------------
+    fig, ax = plt.subplots(figsize=(9, 4.2))
+    cx = range(len(cumulative))
+    ax.plot(cx, [c["cum_operating_income_$M"] / 1000 for c in cumulative],
+            marker="o", color="#1f4e79", label="Cumulative operating income")
+    ax.plot(cx, [c["cum_op_income_ex_fees_$M"] / 1000 for c in cumulative],
+            marker="o", color="#b00020",
+            label="Cumulative ex-fee operating income")
+    for i, c in enumerate(cumulative):
+        ax.text(i, c["cum_operating_income_$M"] / 1000 + 2,
+                f"{c['cum_fees_share_of_op_income_%']:.1f}%",
+                ha="center", fontsize=8)
+    ax.set_xticks(list(cx))
+    ax.set_xticklabels([f"FY{c['fiscal_year']}" for c in cumulative])
+    ax.set_ylabel("Cumulative $B")
+    ax.set_title("Costco cumulative profit with and without fees\n"
+                 "(label = cumulative fees as % of cumulative operating income)")
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    fig.savefig(os.path.join(HERE, "cumulative.png"), dpi=120)
     plt.close(fig)
 
     # ---- printed findings --------------------------------------------------
@@ -480,6 +579,33 @@ def main():
           f"the slow, steady half of operating profit; the merchandise "
           f"line supplies most of the growth and nearly all of the swing.")
     print()
+    cum_last = cumulative[-1]
+    era_pre, era_surge, era_late = eras[0], eras[1], eras[2]
+    cum_peak = max(cumulative, key=lambda c: c["cum_fees_share_of_op_income_%"])
+    print(f"Cumulative / era lens: over FY2017-FY2026 Costco collected "
+          f"${cum_last['cum_membership_fees_$M']/1000:.1f}B of membership "
+          f"fees against ${cum_last['cum_operating_income_$M']/1000:.1f}B "
+          f"of operating income, so fees supplied "
+          f"{cum_last['cum_fees_share_of_op_income_%']:.1f}% of the "
+          f"decade's operating profit in total and cumulative ex-fee "
+          f"operating income was "
+          f"${cum_last['cum_op_income_ex_fees_$M']/1000:.1f}B. The "
+          f"cumulative fee share peaked at "
+          f"{cum_peak['cum_fees_share_of_op_income_%']:.1f}% through "
+          f"FY{cum_peak['fiscal_year']} and fell every year after to "
+          f"{cum_last['cum_fees_share_of_op_income_%']:.1f}%. By era the "
+          f"fee share fell monotonically: "
+          f"{era_pre['fees_share_of_op_income_%']:.1f}% pre-pandemic "
+          f"(FY2017-FY2019), {era_surge['fees_share_of_op_income_%']:.1f}% "
+          f"in the pandemic surge (FY2020-FY2022), and "
+          f"{era_late['fees_share_of_op_income_%']:.1f}% post-surge "
+          f"(FY2023-FY2026), while the ex-fee operating margin rose from "
+          f"{era_pre['op_margin_ex_fees_%']:.2f}% to "
+          f"{era_surge['op_margin_ex_fees_%']:.2f}% to "
+          f"{era_late['op_margin_ex_fees_%']:.2f}% -- the merchandise "
+          f"business strengthened in every era, so the falling fee share "
+          f"is a denominator story, not a shrinking fee line.")
+    print()
     print("Caveats: fee counterfactual holds expenses flat (approximate "
           "upper bound); in reality losing the fee would also lose the "
           "members and their merchandise spending, which this does not "
@@ -511,7 +637,8 @@ def main():
     print()
     print("Sources: SOURCES.md (results.csv, sensitivity.csv, growth.csv, "
           "growth_rates.csv, stability.csv, results.png, replacement.png, "
-          "growth.png, stability.png written).")
+          "growth.png, stability.png, cumulative.csv, eras.csv, "
+          "cumulative.png written).")
 
 
 if __name__ == "__main__":
