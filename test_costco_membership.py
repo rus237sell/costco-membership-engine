@@ -7,7 +7,8 @@ import unittest
 
 from costco_membership import (
     COSTCO, ERAS, FEE_REALIZATIONS, build_cumulative, build_eras,
-    build_growth, build_growth_rates, build_rows, build_stability,
+    build_growth, build_growth_rates, build_incremental,
+    build_incremental_summary, build_rows, build_stability,
     sensitivity_rows)
 
 
@@ -247,6 +248,86 @@ class TestCumulativeEras(unittest.TestCase):
     def test_era_ex_fee_margin_rises_monotonically(self):
         margins = [e["op_margin_ex_fees_%"] for e in self.eras[:3]]
         self.assertEqual(margins, [0.94, 1.41, 1.75])
+
+
+class TestIncremental(unittest.TestCase):
+    def setUp(self):
+        self.rows = build_rows()
+        self.inc = build_incremental(self.rows)
+        self.summary = build_incremental_summary(self.rows)[0]
+
+    def test_shape_starts_fy2018(self):
+        self.assertEqual(len(self.inc), len(self.rows) - 1)
+        self.assertEqual(self.inc[0]["fiscal_year"], 2018)
+        self.assertEqual(self.inc[-1]["fiscal_year"], 2026)
+
+    def test_deltas_match_level_rows(self):
+        for prev, cur, r in zip(self.rows, self.rows[1:], self.inc):
+            self.assertEqual(r["net_sales_growth_$M"],
+                             cur["net_sales_$M"] - prev["net_sales_$M"])
+            self.assertEqual(r["op_income_growth_$M"],
+                             cur["operating_income_$M"]
+                             - prev["operating_income_$M"])
+            self.assertEqual(
+                r["fee_growth_$M"] + r["ex_fee_op_growth_$M"],
+                r["op_income_growth_$M"])
+
+    def test_components_sum_to_total_rate(self):
+        for r in self.inc:
+            self.assertAlmostEqual(
+                r["fee_per_added_sales_%"] + r["ex_fee_incremental_margin_%"],
+                r["incremental_op_margin_on_added_sales_%"], delta=0.02)
+            self.assertAlmostEqual(
+                r["incremental_op_margin_on_added_sales_%"],
+                r["op_income_growth_$M"] / r["net_sales_growth_$M"] * 100,
+                places=2)
+
+    def test_decade_summary_hand_values(self):
+        s = self.summary
+        self.assertEqual(s["period"], "FY2017-FY2026")
+        self.assertEqual(s["growth_years"], 9)
+        self.assertEqual(s["net_sales_growth_$M"], 171075)
+        self.assertEqual(s["fee_growth_$M"], 3054)
+        self.assertEqual(s["ex_fee_op_growth_$M"], 4520)
+        self.assertEqual(s["op_income_growth_$M"], 7574)
+        self.assertEqual(s["incremental_op_margin_on_added_sales_%"], 4.43)
+        self.assertEqual(s["fee_per_added_sales_%"], 1.79)
+        self.assertEqual(s["ex_fee_incremental_margin_%"], 2.64)
+        self.assertEqual(s["fee_share_of_op_growth_%"], 40.3)
+
+    def test_summary_equals_first_to_last_levels(self):
+        s = self.summary
+        self.assertEqual(s["net_sales_growth_$M"],
+                         self.rows[-1]["net_sales_$M"]
+                         - self.rows[0]["net_sales_$M"])
+        self.assertEqual(s["op_income_growth_$M"],
+                         sum(r["op_income_growth_$M"] for r in self.inc))
+
+    def test_fy2023_ex_fee_incremental_negative(self):
+        fy23 = next(r for r in self.inc if r["fiscal_year"] == 2023)
+        self.assertEqual(fy23["ex_fee_op_growth_$M"], -35)
+        self.assertEqual(fy23["ex_fee_incremental_margin_%"], -0.23)
+        self.assertGreater(fy23["fee_per_added_sales_%"],
+                           fy23["incremental_op_margin_on_added_sales_%"])
+        self.assertEqual(self.summary["negative_ex_fee_incremental_years"], 1)
+
+    def test_range_and_fy2024_peak(self):
+        self.assertEqual(self.summary["min_incremental_op_margin_%"], 2.14)
+        self.assertEqual(self.summary["max_incremental_op_margin_%"], 9.83)
+        peak = max(self.inc,
+                   key=lambda r: r["incremental_op_margin_on_added_sales_%"])
+        self.assertEqual(peak["fiscal_year"], 2024)
+
+    def test_incremental_margin_above_level_margins(self):
+        # decade incremental margin beats the ex-fee level margin in
+        # both endpoint years and the FY2026 reported margin on sales
+        s = self.summary
+        self.assertGreater(s["incremental_op_margin_on_added_sales_%"],
+                           self.rows[-1]["ex_fee_margin_on_net_sales_%"])
+        self.assertGreater(s["ex_fee_incremental_margin_%"],
+                           self.rows[-1]["ex_fee_margin_on_net_sales_%"])
+        self.assertGreater(s["ex_fee_incremental_margin_%"],
+                           self.rows[0]["ex_fee_margin_on_net_sales_%"])
 
 
 if __name__ == "__main__":

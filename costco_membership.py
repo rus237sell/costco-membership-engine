@@ -43,6 +43,16 @@ and pooling show whether the long-run dependence on fees is actually
 falling, and how much of the decade's profit the fee line supplied in
 total rather than in any single year.
 
+v6 adds an incremental-margin / operating-leverage cut, also on the
+same table: each year's change in operating income divided by that
+year's change in net sales, split exactly into the fee component and
+the ex-fee merchandise component (the two changes sum to the operating
+income change, so their per-sales-dollar rates sum too). The level
+margins in v1 say what profit Costco keeps on all sales; this cut asks
+what it kept on the sales it added -- and because fees carry no
+merchandise cost, a fee line that is under 2% of incremental sales can
+still supply two fifths of incremental profit.
+
 Coverage: fiscal 2017 through fiscal 2026 (fiscal years end in late
 August / early September; FY2023 was a 53-week year). Figures are
 transcribed from the 10-K income statements in SOURCES.md and
@@ -310,6 +320,78 @@ def build_eras(rows):
     return out
 
 
+def build_incremental(rows):
+    """Incremental margin per year: profit change per added sales dollar.
+
+    For each year from FY2018: delta operating income / delta net sales,
+    split into fee and ex-fee components over the same denominator.
+    delta_op = delta_fees + delta_ex_fee by construction, so the two
+    component rates sum to the total rate (to rounding). Fees are
+    divided by merchandise sales growth even though they are not sales:
+    that is the point -- it measures how much pure fee drop-through
+    each added merchandise dollar brought with it.
+    """
+    out = []
+    for prev, cur in zip(rows, rows[1:]):
+        d_sales = cur["net_sales_$M"] - prev["net_sales_$M"]
+        d_fees = (cur["membership_fees_$M"]
+                  - prev["membership_fees_$M"])
+        d_ex = (cur["op_income_ex_fees_$M"]
+                - prev["op_income_ex_fees_$M"])
+        d_op = cur["operating_income_$M"] - prev["operating_income_$M"]
+        assert d_fees + d_ex == d_op
+        out.append({
+            "fiscal_year": cur["fiscal_year"],
+            "net_sales_growth_$M": d_sales,
+            "fee_growth_$M": d_fees,
+            "ex_fee_op_growth_$M": d_ex,
+            "op_income_growth_$M": d_op,
+            "incremental_op_margin_on_added_sales_%": (
+                round(d_op / d_sales * 100, 2) if d_sales else None),
+            "fee_per_added_sales_%": (
+                round(d_fees / d_sales * 100, 2) if d_sales else None),
+            "ex_fee_incremental_margin_%": (
+                round(d_ex / d_sales * 100, 2) if d_sales else None),
+        })
+    return out
+
+
+def build_incremental_summary(rows):
+    """Decade aggregate of the incremental cut: first-to-last changes.
+
+    A single row pooling all nine growth years (dollar-weighted, like
+    the era cut), so the decade incremental margin is total profit
+    growth over total sales growth, not an average of annual rates.
+    """
+    first, last = rows[0], rows[-1]
+    d_sales = last["net_sales_$M"] - first["net_sales_$M"]
+    d_fees = last["membership_fees_$M"] - first["membership_fees_$M"]
+    d_ex = (last["op_income_ex_fees_$M"]
+            - first["op_income_ex_fees_$M"])
+    d_op = last["operating_income_$M"] - first["operating_income_$M"]
+    assert d_fees + d_ex == d_op
+    inc = build_incremental(rows)
+    rates = [r["incremental_op_margin_on_added_sales_%"] for r in inc]
+    ex_rates = [r["ex_fee_incremental_margin_%"] for r in inc]
+    return [{
+        "period": f"FY{first['fiscal_year']}-FY{last['fiscal_year']}",
+        "growth_years": len(inc),
+        "net_sales_growth_$M": d_sales,
+        "fee_growth_$M": d_fees,
+        "ex_fee_op_growth_$M": d_ex,
+        "op_income_growth_$M": d_op,
+        "incremental_op_margin_on_added_sales_%": round(
+            d_op / d_sales * 100, 2),
+        "fee_per_added_sales_%": round(d_fees / d_sales * 100, 2),
+        "ex_fee_incremental_margin_%": round(d_ex / d_sales * 100, 2),
+        "fee_share_of_op_growth_%": round(d_fees / d_op * 100, 1),
+        "min_incremental_op_margin_%": min(rates),
+        "max_incremental_op_margin_%": max(rates),
+        "negative_ex_fee_incremental_years": sum(
+            1 for v in ex_rates if v < 0),
+    }]
+
+
 def edgar_crosscheck():
     """Live SEC EDGAR company facts: total revenue, operating income and
     net income by fiscal year-end, to cross-check the transcribed table.
@@ -371,6 +453,10 @@ def main():
     write_csv(os.path.join(HERE, "cumulative.csv"), cumulative)
     eras = build_eras(rows)
     write_csv(os.path.join(HERE, "eras.csv"), eras)
+    incremental = build_incremental(rows)
+    write_csv(os.path.join(HERE, "incremental.csv"), incremental)
+    inc_summary = build_incremental_summary(rows)
+    write_csv(os.path.join(HERE, "incremental_summary.csv"), inc_summary)
 
     # ---- chart: operating income vs ex-membership operating income --------
     yrs = [str(r["fiscal_year"]) for r in rows]
@@ -476,6 +562,31 @@ def main():
     ax.legend(fontsize=9)
     fig.tight_layout()
     fig.savefig(os.path.join(HERE, "cumulative.png"), dpi=120)
+    plt.close(fig)
+
+    # ---- chart: incremental margin ----------------------------------------
+    fig, ax = plt.subplots(figsize=(9, 4.2))
+    ix = range(len(incremental))
+    ax.bar(ix, [r["fee_per_added_sales_%"] for r in incremental],
+           width=0.6, color="#1f4e79",
+           label="Fee growth per added net sales $")
+    ax.bar(ix, [r["ex_fee_incremental_margin_%"] for r in incremental],
+           width=0.6,
+           bottom=[r["fee_per_added_sales_%"] for r in incremental],
+           color="#b00020",
+           label="Ex-fee incremental margin")
+    ax.axhline(0, color="black", linewidth=0.8)
+    for i, r in enumerate(incremental):
+        total = r["incremental_op_margin_on_added_sales_%"]
+        ax.text(i, total + 0.25, f"{total:.1f}%", ha="center", fontsize=8)
+    ax.set_xticks(list(ix))
+    ax.set_xticklabels([f"FY{r['fiscal_year']}" for r in incremental])
+    ax.set_ylabel("% of that year's added net sales")
+    ax.set_title("Costco incremental margin: profit kept on added sales\n"
+                 "(label = total incremental operating margin)")
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    fig.savefig(os.path.join(HERE, "incremental.png"), dpi=120)
     plt.close(fig)
 
     # ---- printed findings --------------------------------------------------
@@ -606,6 +717,37 @@ def main():
           f"business strengthened in every era, so the falling fee share "
           f"is a denominator story, not a shrinking fee line.")
     print()
+    inc_s = inc_summary[0]
+    fy23i = next(r for r in incremental
+                 if r["fiscal_year"] == 2023)
+    fy24i = next(r for r in incremental
+                 if r["fiscal_year"] == 2024)
+    print(f"Incremental margin: over FY2017-FY2026 Costco added "
+          f"${inc_s['net_sales_growth_$M']/1000:.1f}B of net sales and "
+          f"${inc_s['op_income_growth_$M']/1000:.2f}B of operating "
+          f"income -- an incremental operating margin of "
+          f"{inc_s['incremental_op_margin_on_added_sales_%']:.2f}% on "
+          f"added sales, above the level margin in either endpoint "
+          f"year. Fees supplied just "
+          f"{inc_s['fee_per_added_sales_%']:.2f}% of added sales but "
+          f"{inc_s['fee_share_of_op_growth_%']:.1f}% of added profit, "
+          f"because fee growth drops through with no merchandise cost; "
+          f"the ex-fee incremental margin was "
+          f"{inc_s['ex_fee_incremental_margin_%']:.2f}%, well above the "
+          f"ex-fee level margin (1.00% of net sales in FY2017, 1.94% in "
+          f"FY2026), so the merchandise business also leveraged its "
+          f"growth. The annual cut is volatile: the total incremental "
+          f"margin ran from "
+          f"{inc_s['min_incremental_op_margin_%']:.2f}% to "
+          f"{inc_s['max_incremental_op_margin_%']:.2f}% "
+          f"({fy24i['incremental_op_margin_on_added_sales_%']:.2f}% in "
+          f"FY2024), and in FY2023 ex-fee profit fell "
+          f"${-fy23i['ex_fee_op_growth_$M']}M on "
+          f"${fy23i['net_sales_growth_$M']/1000:.1f}B of added sales "
+          f"(ex-fee incremental margin "
+          f"{fy23i['ex_fee_incremental_margin_%']:.2f}%), so fees "
+          f"supplied more than all of that year's incremental profit.")
+    print()
     print("Caveats: fee counterfactual holds expenses flat (approximate "
           "upper bound); in reality losing the fee would also lose the "
           "members and their merchandise spending, which this does not "
@@ -638,7 +780,8 @@ def main():
     print("Sources: SOURCES.md (results.csv, sensitivity.csv, growth.csv, "
           "growth_rates.csv, stability.csv, results.png, replacement.png, "
           "growth.png, stability.png, cumulative.csv, eras.csv, "
-          "cumulative.png written).")
+          "cumulative.png, incremental.csv, incremental_summary.csv, "
+          "incremental.png written).")
 
 
 if __name__ == "__main__":
