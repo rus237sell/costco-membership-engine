@@ -53,6 +53,15 @@ what it kept on the sales it added -- and because fees carry no
 merchandise cost, a fee line that is under 2% of incremental sales can
 still supply two fifths of incremental profit.
 
+v7 adds a margin bridge, also on the same table: reported operating
+margin (on total revenue) splits exactly into fees as a share of
+revenue plus the ex-fee margin on total revenue, because operating
+income is fees plus ex-fee operating income. Every year's change in
+the reported margin -- against FY2017 and against the prior year --
+therefore splits exactly into a fee part and an ex-fee part. The v1
+levels say the fee line is the bigger half of the margin; the bridge
+asks which half moved it.
+
 Coverage: fiscal 2017 through fiscal 2026 (fiscal years end in late
 August / early September; FY2023 was a 53-week year). Figures are
 transcribed from the 10-K income statements in SOURCES.md and
@@ -392,6 +401,76 @@ def build_incremental_summary(rows):
     }]
 
 
+def _margin_parts(row):
+    """(fee, ex-fee, reported) operating margin points on total revenue,
+    unrounded. The first two sum to the third exactly."""
+    total = row["total_revenue_$M"]
+    fee = row["membership_fees_$M"] / total * 100
+    ex = row["op_income_ex_fees_$M"] / total * 100
+    return fee, ex, fee + ex
+
+
+def build_margin_bridge(rows):
+    """Margin bridge per year: reported margin split into its two exact
+    parts, with each part's change vs the first year and vs the prior
+    year. Changes are computed from unrounded parts, so a part's change
+    can differ from the difference of its rounded levels by 0.01 pt."""
+    out = []
+    base = _margin_parts(rows[0])
+    prev = None
+    for r in rows:
+        fee, ex, rep = _margin_parts(r)
+        out.append({
+            "fiscal_year": r["fiscal_year"],
+            "fee_margin_pts": round(fee, 2),
+            "ex_fee_margin_pts": round(ex, 2),
+            "reported_op_margin_pts": round(rep, 2),
+            "fee_change_vs_FY2017_pts": round(fee - base[0], 2),
+            "ex_fee_change_vs_FY2017_pts": round(ex - base[1], 2),
+            "reported_change_vs_FY2017_pts": round(rep - base[2], 2),
+            "fee_change_vs_prior_year_pts": (
+                round(fee - prev[0], 2) if prev else None),
+            "ex_fee_change_vs_prior_year_pts": (
+                round(ex - prev[1], 2) if prev else None),
+            "reported_change_vs_prior_year_pts": (
+                round(rep - prev[2], 2) if prev else None),
+        })
+        prev = (fee, ex, rep)
+    return out
+
+
+def build_margin_bridge_summary(rows):
+    """Decade aggregate of the margin bridge: first-to-last changes.
+
+    The ex-fee share of the reported change can exceed 100% when the
+    fee part moved the other way -- the reported margin then rose by
+    less than the merchandise business improved it."""
+    bridge = build_margin_bridge(rows)
+    first, last = bridge[0], bridge[-1]
+    fee0, ex0, rep0 = _margin_parts(rows[0])
+    fee1, ex1, rep1 = _margin_parts(rows[-1])
+    d_fee, d_ex, d_rep = fee1 - fee0, ex1 - ex0, rep1 - rep0
+    fee_trough = min(bridge, key=lambda b: b["fee_margin_pts"])
+    ex_trough = min(bridge, key=lambda b: b["ex_fee_margin_pts"])
+    yoy = [b["reported_change_vs_prior_year_pts"] for b in bridge[1:]]
+    return [{
+        "period": f"FY{rows[0]['fiscal_year']}-FY{rows[-1]['fiscal_year']}",
+        "reported_op_margin_start_pts": round(rep0, 2),
+        "reported_op_margin_end_pts": round(rep1, 2),
+        "reported_change_pts": round(d_rep, 2),
+        "fee_change_pts": round(d_fee, 2),
+        "ex_fee_change_pts": round(d_ex, 2),
+        "ex_fee_share_of_reported_change_%": (
+            round(d_ex / d_rep * 100, 1) if d_rep else None),
+        "fee_margin_trough_year": fee_trough["fiscal_year"],
+        "fee_margin_trough_pts": fee_trough["fee_margin_pts"],
+        "ex_fee_margin_trough_year": ex_trough["fiscal_year"],
+        "ex_fee_margin_trough_pts": ex_trough["ex_fee_margin_pts"],
+        "reported_margin_up_years": sum(1 for v in yoy if v > 0),
+        "reported_margin_down_years": sum(1 for v in yoy if v < 0),
+    }]
+
+
 def edgar_crosscheck():
     """Live SEC EDGAR company facts: total revenue, operating income and
     net income by fiscal year-end, to cross-check the transcribed table.
@@ -457,6 +536,11 @@ def main():
     write_csv(os.path.join(HERE, "incremental.csv"), incremental)
     inc_summary = build_incremental_summary(rows)
     write_csv(os.path.join(HERE, "incremental_summary.csv"), inc_summary)
+    bridge = build_margin_bridge(rows)
+    write_csv(os.path.join(HERE, "margin_bridge.csv"), bridge)
+    bridge_summary = build_margin_bridge_summary(rows)
+    write_csv(os.path.join(HERE, "margin_bridge_summary.csv"),
+              bridge_summary)
 
     # ---- chart: operating income vs ex-membership operating income --------
     yrs = [str(r["fiscal_year"]) for r in rows]
@@ -587,6 +671,31 @@ def main():
     ax.legend(fontsize=9)
     fig.tight_layout()
     fig.savefig(os.path.join(HERE, "incremental.png"), dpi=120)
+    plt.close(fig)
+
+    # ---- chart: margin bridge ---------------------------------------------
+    fig, ax = plt.subplots(figsize=(9, 4.2))
+    bx = range(len(bridge))
+    ax.bar(bx, [b["fee_margin_pts"] for b in bridge],
+           width=0.6, color="#1f4e79",
+           label="Membership fees as % of total revenue")
+    ax.bar(bx, [b["ex_fee_margin_pts"] for b in bridge],
+           width=0.6,
+           bottom=[b["fee_margin_pts"] for b in bridge],
+           color="#b00020",
+           label="Ex-fee operating margin on total revenue")
+    ax.axhline(0, color="black", linewidth=0.8)
+    for i, b in enumerate(bridge):
+        total = b["reported_op_margin_pts"]
+        ax.text(i, total + 0.08, f"{total:.2f}%", ha="center", fontsize=8)
+    ax.set_xticks(list(bx))
+    ax.set_xticklabels([f"FY{b['fiscal_year']}" for b in bridge])
+    ax.set_ylabel("Operating margin pts (on total revenue)")
+    ax.set_title("Costco margin bridge: reported margin split by source\n"
+                 "(label = reported operating margin)")
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    fig.savefig(os.path.join(HERE, "margin_bridge.png"), dpi=120)
     plt.close(fig)
 
     # ---- printed findings --------------------------------------------------
@@ -748,6 +857,29 @@ def main():
           f"{fy23i['ex_fee_incremental_margin_%']:.2f}%), so fees "
           f"supplied more than all of that year's incremental profit.")
     print()
+    bs = bridge_summary[0]
+    print(f"Margin bridge: the reported operating margin rose "
+          f"{bs['reported_change_pts']:.2f} pts from FY2017 to FY2026 "
+          f"({bs['reported_op_margin_start_pts']:.2f}% to "
+          f"{bs['reported_op_margin_end_pts']:.2f}%), and the bridge "
+          f"splits that move exactly: the ex-fee margin supplied "
+          f"+{bs['ex_fee_change_pts']:.2f} pts "
+          f"({bs['ex_fee_share_of_reported_change_%']:.1f}% of the net "
+          f"change) while the fee margin supplied "
+          f"{bs['fee_change_pts']:.2f} pts -- fees grew in dollars but "
+          f"shrank as a share of revenue, from 2.21% in FY2017 to a "
+          f"{bs['fee_margin_trough_pts']:.2f}% trough in "
+          f"FY{bs['fee_margin_trough_year']}, recovering to 1.95% by "
+          f"FY2026. The ex-fee margin troughed at "
+          f"{bs['ex_fee_margin_trough_pts']:.2f}% in "
+          f"FY{bs['ex_fee_margin_trough_year']} and nearly doubled from "
+          f"there to 1.91%. The reported margin rose in "
+          f"{bs['reported_margin_up_years']} of the nine growth years "
+          f"and fell in {bs['reported_margin_down_years']}; its largest "
+          f"single-year gain was FY2024 (+0.30 pts, +0.29 of it ex-fee). "
+          f"The margin expanded because the merchandise business "
+          f"improved, not because the fee line did.")
+    print()
     print("Caveats: fee counterfactual holds expenses flat (approximate "
           "upper bound); in reality losing the fee would also lose the "
           "members and their merchandise spending, which this does not "
@@ -781,7 +913,8 @@ def main():
           "growth_rates.csv, stability.csv, results.png, replacement.png, "
           "growth.png, stability.png, cumulative.csv, eras.csv, "
           "cumulative.png, incremental.csv, incremental_summary.csv, "
-          "incremental.png written).")
+          "incremental.png, margin_bridge.csv, "
+          "margin_bridge_summary.csv, margin_bridge.png written).")
 
 
 if __name__ == "__main__":
